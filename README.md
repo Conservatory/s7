@@ -9,8 +9,8 @@ s7's real home page is
 [ccrma.stanford.edu/software/snd/snd/s7.html](https://ccrma.stanford.edu/software/snd/snd/s7.html).
 (See also Carlos Carrasco's "[A love letter to s7
 Scheme](http://carloscarrasco.com/a-love-letter-to-s7-scheme.html)".)
-The s7 maintainers periodically release new tarballs, albeit without
-updating any publicly-visible version number.  The releases archived
+The s7 maintainers periodically release new tarballs, with the only 
+version number being in the main header file.  The releases archived
 here in the [Conservatory](https://conservatory.github.io/) come from
 [2016-11-18](https://github.com/Conservatory/s7/commit/20ab60ef10fedbfa14827810cebdf523f5740167)
 and

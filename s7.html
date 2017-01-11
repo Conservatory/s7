@@ -179,7 +179,7 @@ as an inexact integer.
 <p>This file assumes you know about Scheme and all its problems,
 and want a quick tour of where s7 is different.  (Well, it was quick once upon a time).
 The main difference: if it's in s7, it's a first-class citizen of s7, and that includes
-macros, environments, and syntactic forms.
+macros, environments, and syntactic values.
 </p>
 
 <br>
@@ -829,6 +829,45 @@ such as:
 </div>
 </details>
 
+<!--
+unknown key handling is not good, :allow-key-values?
+
+(define* (f1 a) (list a))
+(f1 :hi) -> (:hi)
+(f1 ':hi) -> (:hi)
+(f1 :a :hi) -> (:hi)
+
+(define* (f2 a :allow-other-keys) (list a))
+(f2 :hi) -> (:hi)
+
+(define* (f3 a b :allow-other-keys) (list a b))
+(f3 :hi 0) -> (#f #f)
+(f3 :hi) => (:hi #f)
+
+(define* (f4 a) (list (symbol->keyword a))) ; or string->keyword
+(f4 'hi) -> (:hi)
+
+(define* (f5 a)
+  ((lambda* (hi) (list hi)) (symbol->keyword a) 32))
+(f5 'hi) -> (32)
+
+(define* (f6 a b)
+  ((lambda* (hi) (list hi)) a b))
+(f6 :hi 1) -> unknown key :hi
+
+(define* (f7 a b) (list a b))
+(f7 :hi) -> (:hi #f)
+(f7 0 :hi) -> (0 :hi)
+(f7 :hi 0) -> unknown key
+(f7 :a :hi) -> (:hi #f)
+(f7 :a :hi 32) -> (:hi 32)
+
+(define* (f8 a b)
+  ((lambda* (hi ho) (list hi ho)) (symbol->keyword a) b))
+(f8 'hi 32) -> (32 #f)
+(f8 'ho 32) -> (#f 32)
+-->
+
 </blockquote>
 
 
@@ -1086,17 +1125,17 @@ It's almost as easy to write the actual macro body as the backquoted version of 
 &gt; (define-macro (hi a) `(+ 1 ,a))
 <em class="gray">hi</em>
 &gt; (procedure-source hi)
-<em class="gray">(lambda (a) ({list} '+ 1 a))</em>
+<em class="gray">(lambda (a) (list-values '+ 1 a))</em>
 
 &gt; (define-macro (hi a) `(+ 1 ,@a))
 <em class="gray">hi</em>
 &gt; (procedure-source hi)
-<em class="gray">(lambda (a) ({list} '+ 1 ({apply_values} a)))</em>
+<em class="gray">(lambda (a) (list-values '+ 1 (apply-values a)))</em>
 </pre>
 
-<p>{list} is a special version of list to avoid name collisions
-and handle a few tricky details (similarly for {apply_values}).  There is no unquote-splicing
-macro in s7;  ",@(...)" becomes "(unquote ({apply_values} ...))" at read-time.  There shouldn't be any unquote
+<p>list-values and apply-values are quasiquote helper functions described <a href="#listvalues">below</a>.
+There is no unquote-splicing
+macro in s7;  ",@(...)" becomes "(unquote (apply-values ...))" at read-time.  There shouldn't be any unquote
 either.  In Scheme the reader turns ,x into (unquote x), so:
 </p>
 
@@ -1283,8 +1322,11 @@ control over the environment at any point:
                                  ;   but (+ a b) is 15 because at that point + is *: (* 1 15)
 </pre>
 
-<p>Hygienic macros are trivial!  So s7 does not have syntax-rules because it is not needed.
-s7's lint.scm will warn you about any such problematic macro expansion, so I'd
+<p>Hygienic macros are trivial!  Who needs syntax-rules?
+To avoid the variable capture, avoid local variables in the generated code, or
+protect them via with-let; to avoid shadowing of functions and syntax, make the
+environment explicit (via #_ for example).
+s7's lint.scm will warn you about a problematic macro expansion, so I'd
 say just write macros as simply as possible, then let lint tell you
 that it's time to do the with-let shuffle. When that happens, wrap the macro body in
 a with-let that captures the current environment, and at each use of a macro argument
@@ -1371,7 +1413,7 @@ to be evaluated in its definition environment:
 ; (macroexpand (mac 2 3))
 ; (with-let (inlet :a 2 :b 3) (+ a b))
 ; (procedure-source mac)
-; (lambda (a b) (list 'with-let (list 'inlet :a a :b b) ({list} '+ 'a 'b)))
+; (lambda (a b) (list 'with-let (list 'inlet :a a :b b) (list-values '+ 'a 'b)))
 -->
 
 
@@ -2404,17 +2446,24 @@ Environments are first class (and applicable) objects in s7.
 &gt; (let ((e (inlet 'a (inlet 'b 1 'c 2)))) (e 'a 'b)) ; in C terms, e-&gt;a-&gt;b 
 <em class="gray">1</em>  
 &gt; (let ((e (inlet 'a (inlet 'b 1 'c 2)))) (set! (e 'a 'b) 3) (e 'a 'b))
-<em class="gray">3</em>  
+<em class="gray">3</em>
+&gt; (define* (make-let (a 1) (b 2)) (sublet (rootlet) (curlet)))
+<em class="gray">make-let</em>
+&gt; (make-let :b 32)
+<em class="gray">(inlet 'a 1 'b 32)</em>
 </pre>
 </blockquote>
-
 
 <p>As the names suggest, in s7 an environment is viewed as a disembodied let.  Environments are equal if they
 contain the same symbols with the same values leaving aside shadowing, and taking into account the environment
 chain up to the rootlet.  That is, two environments are equal if any local variable of either has the same value in both.
 </p>
 
-<p><b>with-let</b> evaluates its body in the given environment, so
+<p><b>let-ref</b> and <b>let-set!</b> return #&lt;undefined&gt; if the first argument is not
+defined in the environment or its parents.
+</p>
+<p>
+<b>with-let</b> evaluates its body in the given environment, so
 <code>(with-let e . body)</code> is equivalent to
 <code>(eval `(begin ,@body) e)</code>, but probably faster.
 Similarly, <code>(let bindings . body)</code> is equivalent to
@@ -3262,7 +3311,33 @@ tells s7 that its arguments should be handled in a special way, and the multiple
 as soon as the arguments are spliced into some caller's arguments.  
 </p>
 
-<p>Internally, s7 uses <code>(apply values ...)</code> to implement unquote splicing (",@") in quasiquote.
+<p id="listvalues">There are two helper functions for multiple values, apply-values and list-values,
+both intended primarily for quasiquote where (apply-values ...) implements what other schemes call unquote-splicing (",@...").
+(apply-values lst) is like (apply values lst),
+and (list-values ...) is like (list ...) except in one special case.  It is common in writing macros
+to create some piece of code to be spliced into the output, but if that code is nil, the resulting
+macro code should contain nothing (not nil).  apply-values and list-values cooperate with quasiquote to implement
+this.  As an example:
+</p>
+<pre class="indented">
+&gt; (list-values 1 2 (apply-values) 3)
+<em class="gray">(1 2 3)</em>
+&gt; (define (supply . args) (apply-values args))
+<em class="gray">supply</em>
+&gt; (define (consume f . args) (apply f (apply list-values args)))
+<em class="gray">consume</em>
+&gt; (consume + (supply 1 2) (supply 3 4 5) (supply))
+<em class="gray">15</em>
+&gt; (consume + (supply))
+<em class="gray">0</em>
+</pre>
+
+<p>It might seem simpler to return "nothing" from (values), rather than #&lt;unspecified&gt;,
+but that has drawbacks.  First, <code>(abs -1 (values))</code>, or worse <code>(abs (f x) (f y))</code>
+is no longer an error at the level of the program text; you lose the ability to see at a glance that
+a normal function has the right number of arguments.  Second, a lot of code currently assumes that
+(values) returns #&lt;unspecified&gt;, and that implies that <code>(apply values ())</code> does as well.
+
 <!--
 Is <code>(apply apply func arglist)</code> the same as <code>(apply func (apply values arglist))</code>,
 or (leaving aside <code>'(()))</code>, <code>(func (apply values (apply values arglist)))</code>?
@@ -3281,6 +3356,7 @@ is 15, as anyone would expect.
 </p>
 
 </div>
+
 
 <!--
 <details>
@@ -3374,7 +3450,7 @@ receives one argument, so
 <p>If we were following the "splice immediately" model, this would be <code>(cond (1 2 =&gt; +))</code>
 which is an error in some Schemes.
 So something has to give.  My druthers is to make "values" work as consistently as possible, and hope
-that the one odd corner will not trip anyone.  From that point of view, the "one arg" standard
+that the one odd corner will not trip anyone.  From that point of view, the "one argument" standard
 looks like a wasted opportunity.
 s7 handles it this way:
 </p>
@@ -3383,6 +3459,15 @@ s7 handles it this way:
 &gt; (+ 1 (cond ((values 2 3))) 4)   ; trailing values are not ignored
 <em class="gray">10</em>
 &gt; (cond ((values 1 2 3) =&gt; +))
+<em class="gray">6</em>
+&gt; (cond 
+       ((cond 
+          ((cond ((assoc 'x '((x 1 2 3))) =&gt; cdr)
+                 (else #f))
+            =&gt; apply-values) 
+          (else #f))
+         =&gt; +)
+       (else #f))
 <em class="gray">6</em>
 </pre>
 
@@ -3394,22 +3479,21 @@ s7 handles it this way:
 <em class="gray">3</em>
 </pre>
 
-<p>Now, what have I missed?
+<p>Ideally we'd have a way to tie the values into the
+normal use of =&gt;.  That is, (cond ((assoc x y) =&gt; f)...) would have some nice
+way to take the non-#f value from assoc, wrap it arbitrarily in values and pass that
+to the fed-to function; or equivalently, indicate which argument in the fed-to function
+gets the assoc value (=&lt;?).
+Currently you have to use let or lambda, which partly defeats the
+purpose of =&gt;.  The multi-cond example above is as close as I've come so far,
+but it depends on an s7-internal function (the quasiquote helper apply-values)
+which I'd much rather avoid.
 </p>
+
 </div>
 </details>
 
 </blockquote>
-
-<!-- one place where multiple values might cause surprise:
-    :(define* (a1 (a2 (values 1 2))) a2)
-    :(a1)
-    (values 1 2)
-    :(define (a1 a2) a2)
-    :(a1 (values 1 2))
-    ;(values 1 2): too many arguments: (values 1 2)
--->
-
 
 
 
@@ -3778,7 +3862,7 @@ a modern GUI leaves formatting decisions to a text or table widget.
 In GUI toolkits hooks are called callback-lists, in CL conditions,
 in other contexts watchpoints or signals.  s7 itself has several
 hooks: <a href="#errorhook">*error-hook*</a>, <a href="#readerrorhook">*read-error-hook*</a>,
-<a href="#unboundvariablehook">*unbound-variable-hook*</a>, *missing-close-paren-hook*,
+<a href="#unboundvariablehook">*unbound-variable-hook*</a>, *missing-close-paren-hook*, *rootlet-redefinition-hook*,
 and <a href="#loadhook">*load-hook*</a>.
 make-hook is:
 </p>
@@ -4230,7 +4314,6 @@ Other functions:
 
 <p>The variable (*s7* 'print-length) sets
 the upper limit on how many elements of a sequence are printed by object-&gt;string and format.
-The end-of-file object is #&lt;eof&gt;. 
 When running s7 behind a GUI, you often want input to come from and output to go to
 arbitrary widgets. The function ports provide a way to redirect IO in C.  See <a href="#functionportexample">below</a>
 for an example.
@@ -4238,6 +4321,35 @@ for an example.
 
 
 <blockquote>
+
+
+<div class="indented">
+<p>
+The end-of-file object is #&lt;eof&gt;.
+When the read function encounters the constant #&lt;eof&gt; it returns #&lt;eof&gt;.
+This is neither inconsistent nor unusual: read returns either a form or
+#&lt;eof&gt;.  If read encounters a form that contains #&lt;eof&gt;, it returns a
+form containing #&lt;eof&gt;, just as with any other constant.  If it hits the end of
+the input while reading a form, it raises an error (e.g. "missing close paren").
+If it encounters
+#&lt;eof&gt; all by itself at the top level (this never happens),
+it returns that #&lt;eof&gt;.  Consider it a feature!  If you want a top level 
+#&lt;eof&gt; without stopping read, either quote it, or <code>(define *eof* #&lt;eof&gt;)</code> and use *eof* in the
+source: read will return the symbol *eof*.  Built-in #&lt;eof&gt; has lots of
+uses, and as far as I can see, no drawbacks.  For example,
+it is very common to call
+read (or one of its friends) in a loop which first checks for #&lt;eof&gt;, then falls into
+a case statement.  In s7, we can dispense with the extra if (and let), and include
+the #&lt;eof&gt; in the case statement: <code>(case (read-char) ((#&lt;eof&gt;) (quit-reading)) ((#\a)...))</code>.
+</p>
+<pre class="indented">
+&gt; (with-input-from-string "(or x #&lt;eof&gt;)" read)
+<em class="gray">(or x #&lt;eof&gt;)</em>
+&gt; (eof-object? (with-input-from-string "'#&lt;eof&gt;" read))
+<em class="gray">#f</em>
+</pre>
+</div>
+
 
 <div class="indented">
 
@@ -4618,6 +4730,17 @@ returned to the reader.  Otherwise a 'read-error is raised and you drop into the
 Similarly, if some bizaare \ use occurs, *read-error-hook* is called with two arguments,
 #f and the offending character.  If you return a character, it is passed to the reader;
 otherwise you get an error.  lint.scm has an example.
+</p>
+
+<p><em class=def id="rootletredefinitionhook">*rootlet-redefinition-hook*</em> is called when
+a top-level variable is redefined (via define and friends, not set!). 
+</p>
+<pre class="indented">
+(set! (hook-functions *rootlet-redefinition-hook*) 
+      (list (lambda (hook) 
+              (format *stderr* "~A ~A~%" (hook 'symbol) (hook 'value)))))
+</pre>
+<p>will print out the variable's name and the new value.
 </p>
 
 <p>
@@ -5594,6 +5717,7 @@ file-names                    currently loaded files (a list)
 
 safety                        0
 undefined-identifier-warnings #f 
+autoloading?                  #t
 
 catches                       a list of the currently active catch tags
 exits                         a list of active call-with-exit exit functions
@@ -5626,7 +5750,7 @@ Use the standard environment syntax to access these fields:
 
 <p>
 Set (*s7* 'safety) to 2 or higher
-to turn off optimization.
+to turn off optimization.  Set (*s7* 'autoloading) to #f to turn off the autoloader.
 </p>
 
 <p>stacktrace-defaults is a list of four integers and a boolean that tell the error
@@ -5706,10 +5830,6 @@ definition, and a later redefinition does not affect earlier uses.
 
 </div>
 
-<!-- null-environment does not fit very well; how to shadow earlier define-constant for example
-     one of which is unlet; perhaps make a special environment at init time? 
-     the code for that is save_null_environment, but it is untested and commented out.
--->
 
 <div class="indented">
 
@@ -5737,17 +5857,16 @@ definition, and a later redefinition does not affect earlier uses.
 <li>remove list-ref|set!, string-ref|set!, vector-ref|set!, hash-table-ref|set!, set-car!|cdr!, and set-current-output|input|error-port.
 <li>change file-exists? to file? (or omit it and assume the use of libc.scm &mdash; why reinvent the wheel?).
 <li>remove all the conversion and copy functions like vector-&gt;list and vector-copy (use copy or map).
-<li>add typeq? and perhaps make null? generic (see stuff.scm).
 <li>change string-&gt;symbol to symbol (what to do with symbol-&gt;string in that case?)
 <li>change with-output-to-* and with-input-from-* to omit the pointless lambda.
 <li>remove the with-* IO functions (e.g. with-input-from-string), keeping the call-with-* versions (call-with-input-string).
 <li>remove assq, assv, memq, and memv (these are pointless now that assoc and member can be passed eq? and eqv?).
+<li>remove unless: it is much harder to read than when.  The 'not should not be hidden.
 </ul>
 
 <p>There are several less-than-ideal names.  Perhaps s7 should use *pi*, *most-negative-fixnum*,
-*most-positive-fixnum* (*fixmost*?) so that all the built-in variables and constants have the
+*most-positive-fixnum* (*fixleast* and *fixmost*?) so that all the built-in variables and constants have the
 same kind of name (or +pi+ to show it is a constant?).  
-Perhaps object-&gt;string should be -&gt;string.
 get-output-string should be current-output-string. write-char behaves like display, not write.
 provided? should be feature? or *features* should be *provisions*.
 </p>
@@ -5764,16 +5883,24 @@ so the read-time decision involves normal evaluation.
 </p>
 
 <p>Then there's the case case: a case clause without a result appears to be an error in r7rs.
-But the notation used to indicate that is the same as that used for begin.
-So if we allow <code>(begin)</code>, we should allow case clauses to have no explicit result.
-Currently in s7, the case case is an error and <code>(begin)</code> returns nil, which strikes me
-as, *horrors*, inconsistent.  But in cond,
+But the notation used to indicate that is the same as that used for begin,
+so if we allow <code>(begin)</code>, we should allow case clauses to have no explicit result.
+In cond,
 the "implicit progn" (in CL terminology) includes the test expression, so a clause without a result returns
-the test result (if true of course).  In the case case, a similar approach might return
-the selector value.  So should <code>(case x ((0 1)))</code> be an error, or equivalent
-to <code>(case x ((0 1) (begin)))</code> as in CL, or (my favorite) <code>(case x ((0 1) => values))</code>.
-If the latter, an empty else statement would also return the selector since it would be the
-same as <code>(else => values)</code>.
+the test result (if true of course).  In the case case, s7 returns the selector.
+<code>(case x ((0 1)))</code> is equivalent to <code>(case x ((0 1) => values))</code>, 
+just as <code>(cond (A))</code> is equivalent to <code>(cond (A => values))</code>.
+One application is method lookup: <code>((case (obj 'abs) ((#&lt;undefined&gt;) abs) (else)) ...)</code>;
+we would otherwise have to save the lookup result or do it twice.
+This choice has a ripple
+effect on hash-tables.  Currently hash-table-ref returns #f if the key is not in the table,
+mimicking assoc and aimed at cond with =&gt;, but if we also use case and #&lt;undefined&gt;,
+it seems more useful and maybe intuitive to mimic let-ref instead.  But if hash-table-ref returns
+#&lt;undefined&gt;, it's harder to use hash-tables as sets.  Hmm.
+In any case,
+the fall-through value of case should be (and is in s7)
+#&lt;unspecified&gt;: case is a form of if, so
+<code>(if #f #f)</code>, <code>(cond (#f #f))</code>, and <code>(case #t ((#f) #f))</code> should be equal.
 </p>
 
 
@@ -5800,7 +5927,7 @@ Better ideas are always welcome!
 <li>*s7*
 <li>nan.0 -nan.0 inf.0 -inf.0 (what crappy names! nan.0 is an inexact integer that is not a number?)
 <li>most-positive-fixnum most-negative-fixnum
-<li>*unbound-variable-hook* *missing-close-paren-hook* *load-hook* *error-hook* *read-error-hook*
+<li>*unbound-variable-hook* *missing-close-paren-hook* *load-hook* *error-hook* *read-error-hook* *rootlet-redefinition-hook*
 </ul>
 
 <p>__func__ is the name (or name and location) of the function currently being called, as in C.
@@ -5853,7 +5980,7 @@ evaluated but the key is not:
 
 <p>Similarly, vector constants do not have to be quoted.  A list constant is quoted
 to keep it from being evaluated, but
-#(1 2 3) is as unproblematic as "123" or 123.
+#(1 2 3) is as unproblematic as "123" or 123. 
 </p>
 
 <!-- there's another sense in which '() is a constant: you can't apply it to anything. ('() 0) -> error
@@ -6418,6 +6545,7 @@ and it can contain both definitions and expressions.  These are evaluated in the
 in which they occur, and in the environment at the point of the evaluation.  I think
 of it as being a little REPL.  begin does not introduce a new frame in
 the current environment, so defines happen in the enclosing environment.
+Finally, begin, explicit or otherwise, does not pretend to emulate letrec*.
 </p>
 </div>
 
@@ -9353,7 +9481,6 @@ variables at the start of lint.scm to control additional output:
 *report-any-!-as-setter*
 *report-doc-strings*
 *report-func-as-arg-arity-mismatch*
-*report-constant-expressions-in-do*
 *report-bad-variable-names*
 *report-built-in-functions-used-as-variables*
 *report-forward-functions*
@@ -9362,6 +9489,7 @@ variables at the start of lint.scm to control additional output:
 *report-clobbered-function-return-value*
 *report-boolean-functions-misbehaving*
 *report-repeated-code-fragments*
+*report-quasiquote-rewrites*
 </pre>
 
 <p>See lint.scm for more about these switches.  You can also extend lint by adding your own code,

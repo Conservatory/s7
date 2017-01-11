@@ -237,7 +237,7 @@
 
 
 (define-macro* (incf sym (inc 1))
-  `(set! ,sym (+ ,sym ,inc))) ; or ({list} set! sym ({list} + sym inc))
+  `(set! ,sym (+ ,sym ,inc))) ; or (list-values set! sym (list-values + sym inc))
 
 ;; (define-bacro* (incf-1 sym (inc 1)) (apply set! sym (list + sym inc) ()))
 
@@ -353,12 +353,13 @@
 	      spec))))
 
 (define-macro (string-case selector . clauses)
-  `(case (symbol ,selector)             ; case with string constant keys
-     ,@(map (lambda (clause)
-	      (if (pair? (car clause))
-		  (cons (map symbol (car clause)) (cdr clause))
-		  clause))
-	    clauses)))
+  (cons 'case       ; case with string constant keys
+	(cons (list 'symbol selector)
+	      (map (lambda (clause)
+		     (if (pair? (car clause))
+			 (cons (map symbol (car clause)) (cdr clause))
+			 clause))
+		   clauses))))
 
 (define-macro (eval-case key . clauses) ; case with evaluated key-lists
   (let ((select (gensym)))
@@ -786,11 +787,11 @@ Unlike full-find-if, safe-find-if can handle any circularity in the sequences.")
 		      (if (memq (car clause) '(#t else))
 			  clause
 			  (if (= (length (car clause)) 1)
-			      `((,(caar clause) ,obj) ,@(cdr clause))
-			      `((or ,@(map (lambda (type)
-					     (list type obj))
-					   (car clause)))
-				,@(cdr clause)))))
+			      (cons (list (caar clause) obj) (cdr clause))
+			      (cons (cons 'or (map (lambda (type)
+						     (list type obj))
+						   (car clause)))
+				    (cdr clause)))))
 		    clauses)))))
 
 
@@ -1666,7 +1667,7 @@ Unlike full-find-if, safe-find-if can handle any circularity in the sequences.")
 
 (define-macro* (rlambda args . body) ; lambda* but eval arg defaults in run-time env
   (let ((arg-names (map (lambda (arg) (if (pair? arg) (car arg) arg)) args))
-	(arg-defaults (map (lambda (arg) (if (pair? arg) `(,(car arg) (eval ,(cadr arg))) arg)) args)))
+	(arg-defaults (map (lambda (arg) (if (pair? arg) (list (car arg) (list 'eval (cadr arg))) arg)) args)))
     `(define-bacro* (,(gensym) ,@arg-defaults)
        `((lambda ,',arg-names ,'(begin ,@body)) ,,@arg-names))))
 
@@ -1928,21 +1929,21 @@ Unlike full-find-if, safe-find-if can handle any circularity in the sequences.")
 	  
 	  ((dynamic-wind)
 	   ;; here we want to ignore the first and last clauses, and report the last of the second
-	   (let* ((body (let ((p (caddr source)))
-			  (and (eq? (car p) 'lambda)
-			       (cddr p))))
-		  (previous (and body (butlast body)))
-		  (end (and body (last body))))
+	   (let ((body (let ((p (caddr source)))
+			 (and (eq? (car p) 'lambda)
+			      (cddr p)))))
 	     (if (not body)
 		 source
-		 `(dynamic-wind
-		      ,(cadr source)
-		      (lambda ()
-			,@previous
-			(let ((,result ,end))
-			  (format (Display-port) "(dynamic-wind ... ~A) -> ~A~%" ',end ,result)
-			  ,result))
-		      ,(cadddr source)))))
+		 (let ((previous (and body (butlast body)))
+		       (end (and body (last body))))
+		   `(dynamic-wind
+			,(cadr source)
+			(lambda ()
+			  ,@previous
+			  (let ((,result ,end))
+			    (format (Display-port) "(dynamic-wind ... ~A) -> ~A~%" ',end ,result)
+			    ,result))
+			,(cadddr source))))))
 	  
 	  (else
 	   (cons (proc-walk (car source)) 
@@ -1961,7 +1962,7 @@ Unlike full-find-if, safe-find-if can handle any circularity in the sequences.")
 	;; (Display (define (f ...) ...)
 	(let ((func (caadr definition))
 	      (args (cdadr definition))
-	      (body `(begin ,@(proc-walk (cddr definition)))))
+	      (body (cons 'begin (proc-walk (cddr definition)))))
 	  ;(format *stderr* "~A ~A ~A~%" func args body)
 	  (let* ((no-noise-args (remove-keys args))                               ; omit noise words like :optional
 		 (arg-names (cond ((null? args)
@@ -1978,12 +1979,12 @@ Unlike full-find-if, safe-find-if can handle any circularity in the sequences.")
 				  ((proper-list? args)
 				   (if (memq :rest args)
 				       (append (butlast (butlast no-noise-args))   ; also omit the :rest
-					       (list (list '{apply_values} (last args))))
+					       (list (list 'apply-values (last args))))
 				       arg-names))                                 ; (... y x)
 				  ((pair? args)
-				   (append (butlast no-noise-args)            ; (... y ({apply_values} x))
-					   (list (list '{apply_values} (last args)))))
-				  (else (list (list '{apply_values} args))))))     ; (... ({apply_values} x))
+				   (append (butlast no-noise-args)            ; (... y (apply-values x))
+					   (list (list 'apply-values (last args)))))
+				  (else (list (list 'apply-values args))))))     ; (... (apply-values x))
 	    `(define ,func
 	       (define-macro* ,(cons (gensym) args)                                ; args might be a symbol etc
 		 `((lambda* ,(cons ',e ',arg-names)                                ; prepend added env arg because there might be a rest arg
@@ -2047,6 +2048,7 @@ Unlike full-find-if, safe-find-if can handle any circularity in the sequences.")
    :stacktrace-defaults           (*s7* 'stacktrace-defaults)
    :max-stack-size                (*s7* 'max-stack-size)
    :symbol-table-locked?          (*s7* 'symbol-table-locked?)
+   :autoloading?                  (*s7* 'autoloading?)
    :undefined-identifier-warnings (*s7* 'undefined-identifier-warnings)
    :catches                       (*s7* 'catches)
    :exits                         (*s7* 'exits)))
@@ -2126,3 +2128,129 @@ Unlike full-find-if, safe-find-if can handle any circularity in the sequences.")
 			      (rootlet))
 		    (sublet lt)))))))
 
+
+(define sandbox 
+  (let ((documentation "(sandbox code) evaluates code in an environment where nothing outside that code can be affected by its evaluation.")
+	(built-ins 
+	 (let ((ht (make-hash-table))) ; bad guys removed
+	   (for-each
+	    (lambda (op) 
+	      (set! (ht op) #t))
+	    '(symbol? gensym? keyword? let? openlet? iterator? constant? macro? c-pointer? c-object? 
+	      input-port? output-port? eof-object? integer? number? real? complex? rational? random-state? 
+	      char? string? list? pair? vector? float-vector? int-vector? byte-vector? hash-table? 
+	      continuation? procedure? dilambda? boolean? float? proper-list? sequence? null? gensym 
+	      symbol->string string->keyword symbol->keyword byte-vector-ref byte-vector-set!
+	      inlet sublet coverlet openlet let-ref let-set! make-iterator iterate iterator-sequence
+	      iterator-at-end? provided? provide c-pointer port-line-number port-filename 
+	      pair-line-number pair-filename port-closed? let->list char-ready? flush-output-port 
+	      open-input-string open-output-string get-output-string quasiquote call-with-values multiple-value-bind
+	      newline write display read-char peek-char write-char write-string read-byte write-byte 
+	      read-line read-string call-with-input-string with-input-from-string 
+	      call-with-output-string with-output-to-string 
+	      real-part imag-part numerator denominator even? odd? zero? positive? 
+	      negative? infinite? nan? complex magnitude angle rationalize abs exp log sin cos tan asin 
+	      acos atan sinh cosh tanh asinh acosh atanh sqrt expt floor ceiling truncate round lcm gcd
+	      + - * / max min quotient remainder modulo = < > <= >= logior logxor logand lognot ash 
+	      random-state random inexact->exact exact->inexact integer-length make-polar make-rectangular 
+	      logbit? integer-decode-float exact? inexact? random-state->list number->string string->number 
+	      char-upcase char-downcase char->integer integer->char char-upper-case? char-lower-case? 
+	      char-alphabetic? char-numeric? char-whitespace? char=? char<? char>? char<=? char>=? 
+	      char-position string-position make-string string-ref string-set! string=? string<? string>? 
+	      string<=? string>=? char-ci=? char-ci<? char-ci>? char-ci<=? char-ci>=? string-ci=? string-ci<? 
+	      string-ci>? string-ci<=? string-ci>=? string-copy string-fill! list->string string-length 
+	      string->list string-downcase string-upcase string-append substring string object->string 
+	      format cons car cdr set-car! set-cdr! caar cadr cdar cddr caaar caadr cadar cdaar caddr 
+	      cdddr cdadr cddar caaaar caaadr caadar cadaar caaddr cadddr cadadr caddar cdaaar cdaadr 
+	      cdadar cddaar cdaddr cddddr cddadr cdddar assoc member list list-ref list-set! list-tail 
+	      make-list length copy fill! reverse reverse! sort! append assq assv memq memv vector-append 
+	      list->vector vector-fill! vector-length vector->list vector-ref vector-set! vector-dimensions 
+	      make-vector make-shared-vector vector float-vector make-float-vector float-vector-set! 
+	      float-vector-ref int-vector make-int-vector int-vector-set! int-vector-ref string->byte-vector 
+	      byte-vector make-byte-vector hash-table hash-table* make-hash-table hash-table-ref 
+	      hash-table-set! hash-table-entries cyclic-sequences call/cc call-with-current-continuation 
+	      call-with-exit apply for-each map dynamic-wind values 
+	      catch throw error procedure-documentation procedure-signature help procedure-source
+	      procedure-setter arity aritable? not eq? eqv? equal? morally-equal? s7-version
+	      dilambda make-hook hook-functions stacktrace tree-leaves tree-memq object->let
+	      pi most-positive-fixnum most-negative-fixnum nan.0 inf.0 -nan.0 -inf.0
+	      *stderr* *stdout* *stdin*
+	      apply-values list-values
+	      quote if begin let let* letrec letrec* cond case or and do set! unless when else 
+	      with-let with-baffle
+	      lambda lambda* define define* 
+	      define-macro define-macro* define-bacro define-bacro*))
+	   ht))
+	(baddies (list #_eval #_eval-string #_load #_autoload #_define-constant #_define-expansion #_require
+		       #_string->symbol #_symbol->value #_symbol->dynamic-value #_symbol-table #_symbol #_keyword->symbol 
+		       #_defined? #_symbol-access
+		       #_call/cc #_gc #_read
+		       #_open-output-file #_call-with-output-file #_with-output-to-file
+		       #_open-input-file #_call-with-input-file #_with-input-from-file
+		       #_current-output-port #_current-error-port #_current-input-port
+		       #_set-current-output-port #_set-current-error-port #_set-current-input-port
+		       #_varlet #_cutlet #_rootlet #_curlet #_owlet #_outlet #_funclet
+		       #_exit #_emergency-exit
+		       (reader-cond
+			((provided? 'system-extras)
+			 #_getenv #_system #_delete-file #_directory->list #_directory? #_file-exists? #_file-mtime))
+		       )))
+    (lambda (code)
+      ;; block any change to calling program, or access to files, etc
+      (let ((new-code 
+	     (call-with-exit
+	      (lambda (quit)
+		(let walk ((tree code))
+		  (cond ((symbol? tree)
+			 (let ((val (symbol->value tree)))
+			   ;; don't accept any symbol with an accessor
+			   (if (or (symbol-access tree)
+				   (memq tree '(*s7* unquote abort))
+				   (let? val))  ; not sure about this
+			       (quit #f))
+			   ;; don't accept anything except safe built-ins and local vars
+			   (if (not (or (hash-table-ref built-ins tree)
+					(eq? (symbol->value tree (outlet (funclet sandbox))) #<undefined>)))
+			       (quit #f))
+			   ;; if value is also in rootlet, check that it's safe (protect against (set! abs exit) sometime earlier)
+			   (if (or (procedure? val)
+				   (macro? val))
+			       (let ((unval (symbol->value tree (sublet (rootlet) (unlet))))) ; unlet returns the new unshadowing let
+				 (if (not (eq? val unval))
+				     (quit #f))))
+			   tree))
+			
+			((memq tree baddies)  ; if tree is a bad procedure (probably via #_) quit
+			 (quit #f))
+			
+			((not (pair? tree))
+			 tree)
+			
+			(else
+			 ;; do we need to check IO ports and set! here?
+			 (cons (walk (car tree))
+			       (walk (cdr tree))))))))))
+	(and new-code
+	     ;; make sure *s7* will not call any outside code upon error, clear out readers, etc
+	     (let-temporarily ((*#readers* ())
+			       (*libraries* ())
+			       ((*s7* 'max-stack-size) 10000) ; block infinite recursion
+			       ((*s7* 'autoloading?) #f)      ; turn off the autoloader
+			       ((hook-functions *unbound-variable-hook*) ())
+			       ((hook-functions *missing-close-paren-hook*) ())
+			       ((hook-functions *load-hook*) ())
+			       ((hook-functions *error-hook*) ())
+			       ((hook-functions *read-error-hook*) ())
+			       ((hook-functions *rootlet-redefinition-hook*) ())
+			       ((current-output-port) *stdout*)
+			       ((current-error-port) *stderr*))
+	       (catch #t
+		 (lambda ()
+		   (eval new-code (sublet (rootlet) (unlet))))
+		 (lambda args
+		   (format #f "error: ~A"
+			   (catch #t
+			     (lambda ()
+			       (apply format #f (cadr args)))
+			     (lambda args
+			       (copy "?"))))))))))))
