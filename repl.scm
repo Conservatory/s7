@@ -187,7 +187,8 @@
 	    ;; -------- evaluation ---------
 	    (define (badexpr h)            ; *missing-close-paren-hook* function for Enter command
 	      (let ((ow (owlet)))
-		(if (ow 'error-file)
+		(if (and (ow 'error-file)
+			 (not (equal? (ow 'error-file) "repl.scm")))
 		    (error 'syntax-error "missing close paren in ~S" (ow 'error-file))
 		    (set! (h 'result) 'string-read-error))))
 	    
@@ -269,61 +270,61 @@
 	    
 	    
 	    ;; -------- match parens --------
-	    (define (check-parens)
-
-	      (define (char-constant? pos)
-		(and (> pos 2)
-		     (char=? (cur-line (- pos 1)) #\\)
-		     (char=? (cur-line (- pos 2)) #\#)))
-	    
-	      (let ((endpos (- cursor-pos 1)))
-		(if (or (<= cursor-pos 1)
-			(not (char=? (cur-line endpos) #\)))      ; ")" on left of cursor
-			(char-constant? endpos))                  ; it's not "#\)"
-		    (if (number? red-par-pos)
-			(set! red-par-pos #f))
-		    (let ((oparens ())
-			  (new-red-pos #f))
-		      (do ((i 0 (+ i 1)))
-			  ((>= i endpos))
-			(case (cur-line i)
-			  ((#\()
-			   (set! oparens (cons i oparens)))
-			  
-			  ((#\))
-			   (if (pair? oparens)
-			       (set! oparens (cdr oparens))))
-			  
-			  ((#\;)
-			   (do ((k (+ i 1) (+ k 1)))
-			       ((or (>= k endpos)
-				    (char=? (cur-line k) #\newline))
-				(set! i k)
-				(if (>= i endpos)                   ; (f1 "(+ 1 3) should not show first paren as a match (similarly below)
-				    (set! oparens ())))))
-			  
-			  ((#\")
-			   (do ((k (+ i 1) (+ k 1)))
-			       ((or (>= k endpos)
-				    (and (char=? (cur-line k) #\")
-					 (not (char=? (cur-line (- k 1)) #\\))))
-				(set! i k)
-				(if (>= i endpos)
-				    (set! oparens ())))))
-			  
-			  ((#\#)
-			   (if (char=? (cur-line (+ i 1)) #\|)
+	    (define check-parens
+	      (let ((char-constant? 
+		     (lambda (pos)
+		       (and (> pos 2)
+			    (char=? (cur-line (- pos 1)) #\\)
+			    (char=? (cur-line (- pos 2)) #\#)))))
+		(lambda ()
+		  (let ((endpos (- cursor-pos 1)))
+		    (if (or (<= cursor-pos 1)
+			    (not (char=? (cur-line endpos) #\)))      ; ")" on left of cursor
+			    (char-constant? endpos))                  ; it's not "#\)"
+			(if (number? red-par-pos)
+			    (set! red-par-pos #f))
+			(let ((oparens ())
+			      (new-red-pos #f))
+			  (do ((i 0 (+ i 1)))
+			      ((>= i endpos))
+			    (case (cur-line i)
+			      ((#\()
+			       (set! oparens (cons i oparens)))
+			      
+			      ((#\))
+			       (if (pair? oparens)
+				   (set! oparens (cdr oparens))))
+			      
+			      ((#\;)
 			       (do ((k (+ i 1) (+ k 1)))
 				   ((or (>= k endpos)
-					(and (char=? (cur-line k) #\|)
-					     (char=? (cur-line (+ k 1)) #\#)))
-				    (set! i (+ k 1))
+					(char=? (cur-line k) #\newline))
+				    (set! i k)
+				    (if (>= i endpos)                   ; (f1 "(+ 1 3) should not show first paren as a match (similarly below)
+					(set! oparens ())))))
+			      
+			      ((#\")
+			       (do ((k (+ i 1) (+ k 1)))
+				   ((or (>= k endpos)
+					(and (char=? (cur-line k) #\")
+					     (not (char=? (cur-line (- k 1)) #\\))))
+				    (set! i k)
 				    (if (>= i endpos)
-					(set! oparens ()))))))))
-		      (if (pair? oparens)
-			  (set! new-red-pos (car oparens)))
-		      (unless (equal? new-red-pos red-par-pos)
-			(set! red-par-pos (and (number? new-red-pos) new-red-pos)))))))
+					(set! oparens ())))))
+			      
+			      ((#\#)
+			       (if (char=? (cur-line (+ i 1)) #\|)
+				   (do ((k (+ i 1) (+ k 1)))
+				       ((or (>= k endpos)
+					    (and (char=? (cur-line k) #\|)
+						 (char=? (cur-line (+ k 1)) #\#)))
+					(set! i (+ k 1))
+					(if (>= i endpos)
+					    (set! oparens ()))))))))
+			  (if (pair? oparens)
+			      (set! new-red-pos (car oparens)))
+			  (unless (equal? new-red-pos red-par-pos)
+			    (set! red-par-pos (and (number? new-red-pos) new-red-pos)))))))))
 	    
 	    
 	    ;; -------- indentation --------
@@ -430,34 +431,33 @@
 	      (display-prompt)
 	      (cursor-bounds))
 	    
-	    (define (display-line start end)
-
-	      (define (bold text) 
-		(format #f "~C[1m~A~C[0m" #\escape text #\escape)) 
-
-	      ;; if a line wraps, it will confuse the redisplay/cursor positioning code. so truncate the display
-	      (let ((line-len (- (+ end prompt-length 1) start)))
-		(if (>= line-len last-col)
-		    (set! end (- (+ start last-col) prompt-length 1))))
-	      
-	      (if (and (integer? red-par-pos)
-		       (<= start red-par-pos)
-		       (< red-par-pos end))
-		  (string-append
-		   (format #f (if (zero? start)
-				  (values "~A" prompt-string)
-				  (values "~NC" prompt-length #\space)))
-		   (format #f (if (= start red-par-pos)
-				  (values "~A~A"
-					  (bold (red "(")) 
-					  (substring cur-line (+ start 1) end))
-				  (values "~A~A~A"
-					  (substring cur-line start red-par-pos) 
-					  (bold (red "(")) 
-					  (substring cur-line (+ red-par-pos 1) end)))))
-		  (format #f (if (zero? start)
-				 (values "~A~A" prompt-string (substring cur-line 0 end))
-				 (values "~NC~A" prompt-length #\space (substring cur-line start end))))))
+	    (define display-line 
+	      (let ((bold (lambda (text) 
+			    (format #f "~C[1m~A~C[0m" #\escape text #\escape))))
+		(lambda (start end)
+		  ;; if a line wraps, it will confuse the redisplay/cursor positioning code. so truncate the display
+		  (let ((line-len (- (+ end prompt-length 1) start)))
+		    (if (>= line-len last-col)
+			(set! end (- (+ start last-col) prompt-length 1))))
+		  
+		  (if (and (integer? red-par-pos)
+			   (<= start red-par-pos)
+			   (< red-par-pos end))
+		      (string-append
+		       (format #f (if (zero? start)
+				      (values "~A" prompt-string)
+				      (values "~NC" prompt-length #\space)))
+		       (format #f (if (= start red-par-pos)
+				      (values "~A~A"
+					      (bold (red "(")) 
+					      (substring cur-line (+ start 1) end))
+				      (values "~A~A~A"
+					      (substring cur-line start red-par-pos) 
+					      (bold (red "(")) 
+					      (substring cur-line (+ red-par-pos 1) end)))))
+		      (format #f (if (zero? start)
+				     (values "~A~A" prompt-string (substring cur-line 0 end))
+				     (values "~NC~A" prompt-length #\space (substring cur-line start end))))))))
 	    
 	    (define (display-cursor)
 	      (do ((row 0)
@@ -940,101 +940,102 @@
 	    (let ()
 	      ;; Meta key is a problem on the Mac, so I'll package these for easier disposal
 
-	      (define (fixup-new-line)
-		(define (count-newlines line)
-		  (do ((len (length line))
-		       (newlines 0)
-		       (i 0 (+ i 1)))
-		      ((= i len) newlines)
-		    (if (char=? (cur-line i) #\newline)
-			(set! newlines (+ newlines 1)))))
+	      (define fixup-new-line
+		(let ((count-newlines 
+		       (lambda (line)
+			 (do ((len (length line))
+			      (newlines 0)
+			      (i 0 (+ i 1)))
+			     ((= i len) newlines)
+			   (if (char=? (cur-line i) #\newline)
+			       (set! newlines (+ newlines 1)))))))
+		  (lambda ()
+		    (set! cursor-pos (length cur-line))
+		    (let ((newlines (count-newlines cur-line)))
+		      (when (< last-row (+ prompt-row newlines))
+			(format *stderr* "~NC" (- (+ prompt-row newlines) last-row) #\newline)
+			(set! prompt-row (- prompt-row newlines)))
+		      (set! cur-row newlines)))))
+
+	      (define (get-previous-line c)         ; get earlier line indexed by numeric arg
+		(let* ((len (length histtop))
+		       (pos (or (string->number cur-line) len)))
+		  (set! pos (min len (max pos 1)))
+		  (set! cur-line (copy (histtop (- pos 1))))
+		  (fixup-new-line)))
+	      
+	      (define (move-forward-in-history c)
+		(set! m-p-pos (min 0 (+ m-p-pos 1)))
+		(when (positive? (length (history m-p-pos)))
+		  (set! cur-line (history m-p-pos))
+		  (fixup-new-line)))
+	      
+	      (define (move-backward-in-history c)
+		(let ((old-index m-p-pos))
+		  (when (and (zero? m-p-pos) 
+			     (> (length cur-line) 0))
+		    (set! (history) cur-line)
+		    (set! m-p-pos -1))
+		  (set! m-p-pos (max (- m-p-pos 1) (- histsize)))
+		  (if (positive? (length (history m-p-pos)))
+		      (begin
+			(set! cur-line (history m-p-pos))
+			(fixup-new-line))
+		      (set! m-p-pos old-index))))
+	      
+	      (define (go-to-start c)
+		(set! cursor-pos 0)
+		'just-cursor)
+	      
+	      (define (go-to-end c)
 		(set! cursor-pos (length cur-line))
-		(let ((newlines (count-newlines cur-line)))
-		  (when (< last-row (+ prompt-row newlines))
-		    (format *stderr* "~NC" (- (+ prompt-row newlines) last-row) #\newline)
-		    (set! prompt-row (- prompt-row newlines)))
-		  (set! cur-row newlines)))
-
-		(define (get-previous-line c)         ; get earlier line indexed by numeric arg
-		  (let* ((len (length histtop))
-			 (pos (or (string->number cur-line) len)))
-		    (set! pos (min len (max pos 1)))
-		    (set! cur-line (copy (histtop (- pos 1))))
-		    (fixup-new-line)))
-
-		(define (move-forward-in-history c)
-		  (set! m-p-pos (min 0 (+ m-p-pos 1)))
-		  (when (positive? (length (history m-p-pos)))
-		    (set! cur-line (history m-p-pos))
-		    (fixup-new-line)))
-
-		(define (move-backward-in-history c)
-		  (let ((old-index m-p-pos))
-		    (when (and (zero? m-p-pos) 
-			       (> (length cur-line) 0))
-		      (set! (history) cur-line)
-		      (set! m-p-pos -1))
-		    (set! m-p-pos (max (- m-p-pos 1) (- histsize)))
-		    (if (positive? (length (history m-p-pos)))
-			(begin
-			  (set! cur-line (history m-p-pos))
-			  (fixup-new-line))
-			(set! m-p-pos old-index))))
-	    
-		(define (go-to-start c)
-		  (set! cursor-pos 0)
-		  'just-cursor)
-
-		(define (go-to-end c)
-		  (set! cursor-pos (length cur-line))
-		  'just-cursor)
-
-		(define (capitalize c)
-		  (let ((len (length cur-line)))
-		    (let loop ((i cursor-pos))
-		      (if (< i len)
-			  (if (char-alphabetic? (cur-line i))
-			      (begin
-				(save-line)
-				(set! (cur-line i) (char-upcase (cur-line i)))
-				(set! cursor-pos (word-break i)))
-			      (loop (+ i 1)))))))
-		
-		(define (upper-case c)
-		  (do ((len (length cur-line))
-		       (i cursor-pos (+ i 1)))
-		      ((or (= i len)
-			   (char-alphabetic? (cur-line i)))
-		       (when (< i len)
-			 (save-line)
-			 (do ((k i (+ k 1)))
-			     ((or (= k len)
-				  (not (char-alphabetic? (cur-line k))))
-			      (set! cursor-pos k))
-			   (set! (cur-line k) (char-upcase (cur-line k))))))))
-	    
-		(define (lower-case c)
-		  (do ((len (length cur-line))
-		       (i cursor-pos (+ i 1)))
-		      ((or (= i len)
-			   (char-alphabetic? (cur-line i)))
-		       (when (< i len)
-			 (save-line)
-			 (do ((k i (+ k 1)))
-			     ((or (= k len)
-				  (not (char-alphabetic? (cur-line k))))
-			      (set! cursor-pos k))
-			   (set! (cur-line k) (char-downcase (cur-line k))))))))
-		
-		(set! (meta-keymap-functions (char->integer #\p)) move-backward-in-history)
-		(set! (meta-keymap-functions (char->integer #\n)) move-forward-in-history)
-		(set! (meta-keymap-functions (char->integer #\.)) get-previous-line)
-		(set! (meta-keymap-functions (char->integer #\<)) go-to-start)
-		(set! (meta-keymap-functions (char->integer #\>)) go-to-end)
-		(set! (meta-keymap-functions (char->integer #\c)) capitalize)
-		(set! (meta-keymap-functions (char->integer #\u)) upper-case)
-		(set! (meta-keymap-functions (char->integer #\l)) lower-case)
-		)
+		'just-cursor)
+	      
+	      (define (capitalize c)
+		(let ((len (length cur-line)))
+		  (let loop ((i cursor-pos))
+		    (if (< i len)
+			(if (char-alphabetic? (cur-line i))
+			    (begin
+			      (save-line)
+			      (set! (cur-line i) (char-upcase (cur-line i)))
+			      (set! cursor-pos (word-break i)))
+			    (loop (+ i 1)))))))
+	      
+	      (define (upper-case c)
+		(do ((len (length cur-line))
+		     (i cursor-pos (+ i 1)))
+		    ((or (= i len)
+			 (char-alphabetic? (cur-line i)))
+		     (when (< i len)
+		       (save-line)
+		       (do ((k i (+ k 1)))
+			   ((or (= k len)
+				(not (char-alphabetic? (cur-line k))))
+			    (set! cursor-pos k))
+			 (set! (cur-line k) (char-upcase (cur-line k))))))))
+	      
+	      (define (lower-case c)
+		(do ((len (length cur-line))
+		     (i cursor-pos (+ i 1)))
+		    ((or (= i len)
+			 (char-alphabetic? (cur-line i)))
+		     (when (< i len)
+		       (save-line)
+		       (do ((k i (+ k 1)))
+			   ((or (= k len)
+				(not (char-alphabetic? (cur-line k))))
+			    (set! cursor-pos k))
+			 (set! (cur-line k) (char-downcase (cur-line k))))))))
+	      
+	      (set! (meta-keymap-functions (char->integer #\p)) move-backward-in-history)
+	      (set! (meta-keymap-functions (char->integer #\n)) move-forward-in-history)
+	      (set! (meta-keymap-functions (char->integer #\.)) get-previous-line)
+	      (set! (meta-keymap-functions (char->integer #\<)) go-to-start)
+	      (set! (meta-keymap-functions (char->integer #\>)) go-to-end)
+	      (set! (meta-keymap-functions (char->integer #\c)) capitalize)
+	      (set! (meta-keymap-functions (char->integer #\u)) upper-case)
+	      (set! (meta-keymap-functions (char->integer #\l)) lower-case))
 	    
 	    ;; -------- terminal setup --------
 	    (define* (run file)
@@ -1334,86 +1335,88 @@
 	    (* 0.000001 (- (cadr end) (cadr ,start))))))))
 
 
-(define* (apropos name (e (*repl* 'top-level-let)))
-  
-  (define (levenshtein s1 s2)
-    (let ((L1 (length s1))
-	  (L2 (length s2)))
-      (cond ((zero? L1) L2)
-	    ((zero? L2) L1)
-	    (else (let ((distance (make-vector (list (+ L2 1) (+ L1 1)) 0)))
-		    (do ((i 0 (+ i 1)))
-			((> i L1))
-		      (set! (distance 0 i) i))
-		    (do ((i 0 (+ i 1)))
-			((> i L2))
-		      (set! (distance i 0) i))
-		    (do ((i 1 (+ i 1)))
-			((> i L2))
-		      (do ((j 1 (+ j 1)))
-			  ((> j L1))
-			(let ((c1 (+ (distance i (- j 1)) 1))
-			      (c2 (+ (distance (- i 1) j) 1))
-			      (c3 (if (char=? (s2 (- i 1)) (s1 (- j 1)))
-				      (distance (- i 1) (- j 1))
-				      (+ (distance (- i 1) (- j 1)) 1))))
-			  (set! (distance i j) (min c1 c2 c3)))))
-		    (distance L2 L1))))))
-
-  (define* (make-full-let-iterator lt (stop (rootlet))) ; walk the entire let chain
-    (if (eq? stop lt)
-	(make-iterator lt)
-	(letrec ((iterloop 
-		  (let ((iter (make-iterator lt))
-			(iterator? #t))
-		    (lambda ()
-		      (let ((result (iter)))
-			(if (and (eof-object? result)
-				 (iterator-at-end? iter)
-				 (not (eq? stop (iterator-sequence iter))))
-			    (begin 
-			      (set! iter (make-iterator (outlet (iterator-sequence iter))))
-			      (iterloop))
-			    result))))))
-	    (make-iterator iterloop))))
-  
-  (let ((ap-name (if (string? name) name 
-		     (if (symbol? name) (symbol->string name)
-			 (error 'wrong-type-arg "apropos argument 1 should be a string or a symbol"))))
-	(ap-env (if (let? e) e 
-		    (error 'wrong-type-arg "apropos argument 2 should be an environment"))))
-    (let ((strs ())
-	  (min2 (floor (log (length ap-name) 2)))
-	  (have-orange (string=? ((*libc* 'getenv) "TERM") "xterm-256color")))
-      (for-each
-       (lambda (binding)
-	 (if (pair? binding)
-	     (let ((symbol-name (symbol->string (car binding))))
-	       (if (string-position ap-name symbol-name)
-		   (set! strs (cons (cons binding 0) strs))
-		   (let ((distance (levenshtein ap-name symbol-name)))
-		     (if (< distance min2)
-			 (set! strs (cons (cons binding distance) strs))))))))
-       (make-full-let-iterator ap-env))
-
-      (if (not (pair? strs))
-	  'no-match
-	  (begin
-	    (for-each (lambda (b)
-			(format *stderr*
-				(if (zero? (cdr b)) "~C[1m~A~C[0m: ~S~%"                           ; black if exact match somewhere
-				    (if (or (< (cdr b) 2) (not have-orange)) "~C[31m~A~C[0m: ~S~%" ; red for near miss
-					"~C[38;5;208m~A~C[0m: ~S~%"))                              ; orange for less likely choices
-				#\escape (caar b) #\escape
-				(if (procedure? (cdar b))
-				    (let ((doc (procedure-documentation (cdar b)))) ; returns "" if no doc
-				      (if (positive? (length doc))
-					  doc
-					  'procedure))
-				    (cdar b))))
-		      (sort! strs (lambda (a b)
-				    (string<? (symbol->string (caar a)) (symbol->string (caar b))))))
-	    '----)))))
+(define apropos 
+  (let ((levenshtein 
+	 (lambda (s1 s2)
+	   (let ((L1 (length s1))
+		 (L2 (length s2)))
+	     (cond ((zero? L1) L2)
+		   ((zero? L2) L1)
+		   (else (let ((distance (make-vector (list (+ L2 1) (+ L1 1)) 0)))
+			   (do ((i 0 (+ i 1)))
+			       ((> i L1))
+			     (set! (distance 0 i) i))
+			   (do ((i 0 (+ i 1)))
+			       ((> i L2))
+			     (set! (distance i 0) i))
+			   (do ((i 1 (+ i 1)))
+			       ((> i L2))
+			     (do ((j 1 (+ j 1)))
+				 ((> j L1))
+			       (let ((c1 (+ (distance i (- j 1)) 1))
+				     (c2 (+ (distance (- i 1) j) 1))
+				     (c3 (if (char=? (s2 (- i 1)) (s1 (- j 1)))
+					     (distance (- i 1) (- j 1))
+					     (+ (distance (- i 1) (- j 1)) 1))))
+				 (set! (distance i j) (min c1 c2 c3)))))
+			   (distance L2 L1)))))))
+	
+	(make-full-let-iterator             ; walk the entire let chain
+	 (lambda* (lt (stop (rootlet))) 
+	   (if (eq? stop lt)
+	       (make-iterator lt)
+	       (letrec ((iterloop 
+			 (let ((iter (make-iterator lt))
+			       (iterator? #t))
+			   (lambda ()
+			     (let ((result (iter)))
+			       (if (and (eof-object? result)
+					(iterator-at-end? iter)
+					(not (eq? stop (iterator-sequence iter))))
+				   (begin 
+				     (set! iter (make-iterator (outlet (iterator-sequence iter))))
+				     (iterloop))
+				   result))))))
+		 (make-iterator iterloop))))))
+    
+    (lambda* (name (e (*repl* 'top-level-let)))
+      (let ((ap-name (if (string? name) name 
+			 (if (symbol? name) (symbol->string name)
+			     (error 'wrong-type-arg "apropos argument 1 should be a string or a symbol"))))
+	    (ap-env (if (let? e) e 
+			(error 'wrong-type-arg "apropos argument 2 should be an environment"))))
+	(let ((strs ())
+	      (min2 (floor (log (length ap-name) 2)))
+	      (have-orange (string=? ((*libc* 'getenv) "TERM") "xterm-256color")))
+	  (for-each
+	   (lambda (binding)
+	     (if (pair? binding)
+		 (let ((symbol-name (symbol->string (car binding))))
+		   (if (string-position ap-name symbol-name)
+		       (set! strs (cons (cons binding 0) strs))
+		       (let ((distance (levenshtein ap-name symbol-name)))
+			 (if (< distance min2)
+			     (set! strs (cons (cons binding distance) strs))))))))
+	   (make-full-let-iterator ap-env))
+	  
+	  (if (not (pair? strs))
+	      'no-match
+	      (begin
+		(for-each (lambda (b)
+			    (format *stderr*
+				    (if (zero? (cdr b)) "~C[1m~A~C[0m: ~S~%"                           ; black if exact match somewhere
+					(if (or (< (cdr b) 2) (not have-orange)) "~C[31m~A~C[0m: ~S~%" ; red for near miss
+					    "~C[38;5;208m~A~C[0m: ~S~%"))                              ; orange for less likely choices
+				    #\escape (caar b) #\escape
+				    (if (procedure? (cdar b))
+					(let ((doc (procedure-documentation (cdar b)))) ; returns "" if no doc
+					  (if (positive? (length doc))
+					      doc
+					      'procedure))
+					(cdar b))))
+			  (sort! strs (lambda (a b)
+					(string<? (symbol->string (caar a)) (symbol->string (caar b))))))
+		'----)))))))
 
 
 

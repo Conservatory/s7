@@ -2,6 +2,23 @@
 ;;;
 ;;; tie the gsl library into the *libgsl* environment
 
+
+#|
+2.1: gsl_multilarge.h
++ double
++ gsl_multifit_linear_rcond (const gsl_multifit_linear_workspace * w);
++
+changes to sigs in multifit.h
+
+2.2:
+gsl_multifit_nlinear.h
+gsl_multilarge_nlinear.h
+gsl_permute_matrix_char.h
+gsl_permute_matrix_complex_double.h and float/long double and all other types
+many other additions/sig changes (triangular matrices primiarily)
+|#
+
+
 (require cload.scm)
 (provide 'libgsl.scm)
 
@@ -23,15 +40,23 @@
 	(complex (* mag (cos ang)) (* mag (sin ang)))
 	(error 'wrong-type-arg "make-polar args should be real"))))
 
+
 ;; since we might be loading this locally, reader-cond (in that case) won't find gsl-version unless...
-(if (not (defined? '*libgsl*))
-    (with-let (rootlet)
-      (define gsl-version 0.0)		; define at top-level no matter where we are now
-      (when (and (provided? 'linux)
-		 (defined? 'system))
-	(let ((version (system "pkg-config gsl --modversion" #t)))
-	  (if (positive? (length version))
-	      (set! gsl-version (with-input-from-string version read)))))))
+(unless (defined? '*libgsl*)
+  (with-let (rootlet)
+    (define gsl-version 0.0)		; define at top-level no matter where we are now
+    (when (and (provided? 'linux)
+	       (defined? 'system))
+      (let* ((version (system "pkg-config gsl --modversion" #t))
+	     (len (length version)))
+	(when (positive? len)
+	  (set! gsl-version (string->number (if (char=? (version (- len 1)) #\newline)
+						(substring version 0 (- len 1))
+						version)))
+	  (unless (number? gsl-version) ; "2.2.1" -> 2.2?
+	    (let ((i1 (char-position #\. version (+ (char-position #\. version) 1))))
+	      (if (integer? i1)
+		  (set! gsl-version (string->number (substring version 0 i1)))))))))))
 
 (unless (defined? '*libgsl*)
   (define *libgsl*
@@ -3040,7 +3065,9 @@
 		"gsl/gsl_wavelet2d.h"
 		)
        
-       "-I/usr/local/include -g3 -DGSL_DISABLE_DEPRECATED" "-lgsl -lgslcblas" "libgsl_s7")
+       "-I/usr/local/include -g3 -DGSL_DISABLE_DEPRECATED"
+       "-L/usr/local/lib -lgsl -lgslcblas"
+       "libgsl_s7")
 					; GSL_DISABLE_DEPRECATED is needed to avoid a name collision (dating from version 1.7!!)
       (curlet))))
 

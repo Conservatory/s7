@@ -118,7 +118,7 @@
 
 ;;; to place the new function in the caller's current environment, we need to pass the environment in explicitly:
 (define-macro (c-define . args) 
-  `(c-define-1 (curlet) ,@args))
+  (cons 'c-define-1 (cons '(curlet) args)))
 
 
 (define* (c-define-1 cur-env function-info (prefix "") (headers ()) (cflags "") (ldflags "") output-name)
@@ -235,14 +235,6 @@
 	  (signatures (make-hash-table)))
       
       (define (make-signature rtn args)
-	
-	(define (compress sig)
-	  (do ((sig sig (cdr sig)))
-	      ((not (and (pair? sig) 
-			 (pair? (cdr sig))
-			 (eq? (car sig) (cadr sig))))
-	       sig)))
-	
 	(let ((sig (list (cload->signature rtn #t)))
 	      (cyclic #f))
 	  (for-each
@@ -250,7 +242,11 @@
 	     (set! sig (cons (cload->signature arg) sig)))
 	   args)
 	  (let ((len (length sig)))
-	    (set! sig (compress sig))
+	    (set! sig (do ((sig sig (cdr sig)))
+			  ((not (and (pair? sig) 
+				     (pair? (cdr sig))
+				     (eq? (car sig) (cadr sig))))
+			   sig)))
 	    (set! cyclic (not (= len (length sig)))))
 	  (set! sig (reverse sig))
 	  (unless (signatures sig) ; it's not in our collection yet
@@ -573,47 +569,48 @@
 	       (system (format #f "gcc ~A -shared -o ~A ~A ~A" 
 			       o-file-name so-file-name *cload-ldflags* ldflags)))))
       
-      (define (handle-declaration func)
-	
-	(define (add-one-constant type name)
-	  ;; C constant -> scheme
-	  (let ((c-type (if (pair? type) (cadr type) type)))
-	    (if (symbol? name)
-		(set! constants (cons (list c-type (symbol->string (collides? name))) constants))
-		(for-each 
-		 (lambda (c)
-		   (set! constants (cons (list c-type (symbol->string (collides? c))) constants)))
-		 name))))
-	
-	(define (add-one-macro type name)
-	  ;; C macro (with definition check) -> scheme
-	  (let ((c-type (if (pair? type) (cadr type) type)))
-	    (if (symbol? name)
-		(set! macros (cons (list c-type (symbol->string (collides? name))) macros))
-		(for-each 
-		 (lambda (c)
-		   (set! macros (cons (list c-type (symbol->string (collides? c))) macros)))
-		 name))))
-	
-	(define (check-doc func-data)
-	  (let ((doc (caddr func-data)))
-	    (if (and (string? doc)
-		     (> (length doc) 0))
-		func-data
-		(append (list (car func-data) (cadr func-data) (car func-data)) (cdddr func-data)))))
-	
-	;; functions
-	(if (>= (length func) 3)
-	    (apply add-one-function func)
-	    (case (car func)
-	      ((in-C)       (format p "~A~%" (cadr func)))
-	      ((C-init)     (set! inits (cons (cadr func) inits)))
-	      ((C-macro)    (apply add-one-macro (cadr func)))
-	      ((C-function) (collides? (caadr func)) (set! functions (cons (check-doc (cadr func)) functions)))
-	      (else         (apply add-one-constant func)))))
+      (define handle-declaration 
+	(let ()
+	  (define (add-one-constant type name)
+	    ;; C constant -> scheme
+	    (let ((c-type (if (pair? type) (cadr type) type)))
+	      (if (symbol? name)
+		  (set! constants (cons (list c-type (symbol->string (collides? name))) constants))
+		  (for-each 
+		   (lambda (c)
+		     (set! constants (cons (list c-type (symbol->string (collides? c))) constants)))
+		   name))))
+	  
+	  (define (add-one-macro type name)
+	    ;; C macro (with definition check) -> scheme
+	    (let ((c-type (if (pair? type) (cadr type) type)))
+	      (if (symbol? name)
+		  (set! macros (cons (list c-type (symbol->string (collides? name))) macros))
+		  (for-each 
+		   (lambda (c)
+		     (set! macros (cons (list c-type (symbol->string (collides? c))) macros)))
+		   name))))
+	  
+	  (define (check-doc func-data)
+	    (let ((doc (caddr func-data)))
+	      (if (and (string? doc)
+		       (> (length doc) 0))
+		  func-data
+		  (append (list (car func-data) (cadr func-data) (car func-data)) (cdddr func-data)))))
+	  
+	  (lambda (func)
+	    ;; functions
+	    (if (>= (length func) 3)
+		(apply add-one-function func)
+		(case (car func)
+		  ((in-C)       (format p "~A~%" (cadr func)))
+		  ((C-init)     (set! inits (cons (cadr func) inits)))
+		  ((C-macro)    (apply add-one-macro (cadr func)))
+		  ((C-function) (collides? (caadr func)) (set! functions (cons (check-doc (cadr func)) functions)))
+		  (else         (apply add-one-constant func)))))))
       
       
-      ;; this is the body of c-define
+      ;; c-define-1 (called in c-define macro above)
       (unless (and output-name
 		   (file-exists? c-file-name)
 		   (file-exists? so-file-name)
@@ -637,11 +634,6 @@
       (let ((new-env (sublet cur-env 'init_func (string->symbol init-name))))
 	(format *stderr* "loading ~A~%" so-file-name)
 	(load so-file-name new-env)))))
-
-
-
-;;; backwards compatibility
-(define define-c-function c-define)
 
 
 #|

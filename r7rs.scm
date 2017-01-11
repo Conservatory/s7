@@ -208,7 +208,7 @@
       (if (not (null? (cdr args)))
 	  (for-each
 	   (lambda (arg expr)
-	     (set! form `((lambda ,arg ,form) ,expr)))
+	     (set! form (list (list 'lambda arg form) expr)))
 	   (cdr args)
 	   (cdr exprs)))
       form)))
@@ -342,7 +342,7 @@
 (define-macro (delay-force expr) 
   `(make-promise #f (lambda () ,expr)))
 (define-macro (r7rs-delay expr) ; "delay" is taken damn it
-  `(delay-force (make-promise #t (lambda () ,expr))))
+  (list 'delay-force (list 'make-promise #t (list 'lambda () expr))))
 (define (make-promise done? proc) 
   (list (cons done? proc)))
 (define (force promise)

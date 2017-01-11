@@ -1369,7 +1369,7 @@ int main(int argc, char **argv)
     s7_gc_unprotect_at(sc, gc_loc);
   }
 
-  if (s7_begin_hook(sc) != NULL)
+  if (s7_begin_hook(sc))
     {fprintf(stderr, "%d: begin_hook is not null?\n", __LINE__);}
   tested_begin_hook = false;
   s7_set_begin_hook(sc, test_begin_hook);

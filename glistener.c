@@ -2241,7 +2241,7 @@ static char *filename_completion(glistener *g, const char *partial_name)
 	    {
 	      if (strcmp(rname, file_name) != 0)
 		glistener_append_status(g, rname);
-	      if (current_match == NULL)
+	      if (!current_match)
 		{
 		  len = strlen(rname);
 		  current_match = (char *)calloc(len + 2, sizeof(char));
@@ -2331,7 +2331,7 @@ static bool compare_names(const char *symbol_name, void *data)
       if (strcmp(m->text, symbol_name) != 0)
 	glistener_append_status(m->g, symbol_name);
 
-      if (m->current_match == NULL)
+      if (!m->current_match)
 	{
 	  m->len = strlen(symbol_name);
 	  m->current_match = (char *)calloc(m->len + 1, sizeof(char));
